@@ -53,12 +53,12 @@ class ModelObject(nn.Module):
         raise NotImplementedError()
 
     @staticmethod
-    def mean(self, params):
+    def mean(params):
         """returns the mean of a distribution with the given params"""
         return params[0]
 
     @staticmethod
-    def std(self, params):
+    def std(params):
         """returns the standard deviation of a distribution with the given params"""
         return np.ones(params[0].shape)
 
