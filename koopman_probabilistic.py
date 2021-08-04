@@ -374,7 +374,7 @@ class KoopmanProb(nn.Module):
         weight_decay : TYPE float, regularization parameter
         lr_theta : TYPE float, learning rate for the model object
         lr_omega : TYPE float, learning rate for adjusting omegas
-        training_mask : TYPE torch.tensor, which training data points should be
+        training_mask : TYPE torch.tensor or np.array, which training data points should be
                         using in optimizing the location parameter (eg. mu).
                         shape should match xt. a 1 indicates to train mu on that data,
                         a 0 indicates not to.
@@ -387,6 +387,8 @@ class KoopmanProb(nn.Module):
         '''
 
         assert (len(xt.shape) > 1), 'Input data needs to be at least 2D'
+        if training_mask is not None:
+            training_mask = torch.Tensor(training_mask)
 
         self.max_t = tt.max() if tt is not None else xt.shape[0]
         l = None

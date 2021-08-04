@@ -260,7 +260,7 @@ class SkewNLLwithTime(SkewNormalNLL):
         :param num_freqs: list. number of frequencies used for each of the 3 parameters: [num_mu, num_sig, num_alpha]
         :param n: size of NN's second layer
         """
-        super(SkewNLLwithTime, self).__init__(x_dim, num_freqs, n=256)
+        super(SkewNLLwithTime, self).__init__(x_dim, num_freqs, n)
 
         self.l1_mu = nn.Linear(2 * self.num_freqs[0] + 1, n)
         self.l2_mu = nn.Linear(n, 64)
@@ -432,7 +432,7 @@ class ConwayMaxwellPoissonNLL(ModelObject):
 
 class GammaNLL(ModelObject):
 
-    def __init__(self, x_dim, num_freqs, n):
+    def __init__(self, x_dim, num_freqs, n=256, n2=64):
         """
         Negative Log Likelihood neural network assuming Gamma distribution of x at every point in time.
         Trains using NLL
@@ -443,12 +443,12 @@ class GammaNLL(ModelObject):
         super(GammaNLL, self).__init__(num_freqs)
 
         self.l1_rate = nn.Linear(2 * self.num_freqs[0], n)
-        self.l2_rate = nn.Linear(n, 64)
-        self.l3_rate = nn.Linear(64, x_dim)
+        self.l2_rate = nn.Linear(n, n2)
+        self.l3_rate = nn.Linear(n2, x_dim)
 
         self.l1_a = nn.Linear(2 * self.num_freqs[1], n)
-        self.l2_a = nn.Linear(n, 64)
-        self.l3_a = nn.Linear(64, x_dim)
+        self.l2_a = nn.Linear(n, n2)
+        self.l3_a = nn.Linear(n2, x_dim)
 
     def decode(self, w):
         w_rate = w[..., self.param_idxs[0]]
@@ -464,8 +464,14 @@ class GammaNLL(ModelObject):
         return rate, a
 
     def forward(self, w, data, training_mask=None):
-        assert (training_mask is None), "Training masks won't help when using a Gamma distribution"
         rate, a = self.decode(w)
+        if training_mask is not None:
+            mean = a / rate
+            var = a / rate ** 2
+            # don't change prediction of mean based on 0-training_mask indices
+            mean = training_mask * mean + (1 - training_mask) * mean.detach()
+            rate = mean / var
+            a = mean / var ** 2
 
         losses = -torch.distributions.gamma.Gamma(a, rate).log_prob(data)
         avg = torch.mean(losses, dim=-1)
@@ -478,6 +484,73 @@ class GammaNLL(ModelObject):
     @staticmethod
     def std(params):
         return np.sqrt(params[1] / params[0] ** 2)
+
+    @staticmethod
+    def rescale(scale, params):
+        return params[0] / scale, params[1]
+
+
+#         mean, var = self.decode(w)
+#         if training_mask is not None:
+#             mean = training_mask * mean + (1 - training_mask) * mean.detach()
+#
+#         rate = mean / var
+#         a = mean**2 / var
+#         losses = -torch.distributions.gamma.Gamma(a, rate).log_prob(data)
+#         avg = torch.mean(losses, dim=-1)
+#         return avg
+
+# class GammaNLLMomentBased(ModelObject):
+#
+#     def __init__(self, x_dim, num_freqs, n):
+#         """
+#         Moment-based Negative Log Likelihood neural network assuming Gamma distribution of x at every point in time.
+#         Trains using NLL
+#         :param x_dim: dimension of what will be modeled
+#         :param num_freqs: list of the number of frequencies used to model each parameter: [num_rate, num_a]
+#         :param n: size of 2nd layer of NN
+#         """
+#         super(GammaNLLMomentBased, self).__init__(num_freqs)
+#
+#         self.l1_mean = nn.Linear(2 * self.num_freqs[0], n)
+#         self.l2_mean = nn.Linear(n, 64)
+#         self.l3_mean = nn.Linear(64, x_dim)
+#
+#         self.l1_var = nn.Linear(2 * self.num_freqs[1], n)
+#         self.l2_var = nn.Linear(n, 64)
+#         self.l3_var = nn.Linear(64, x_dim)
+#
+#     def decode(self, w):
+#         w_mean = w[..., self.param_idxs[0]]
+#         mean1 = nn.Tanh()(self.l1_mean(w_mean))
+#         mean2 = nn.Tanh()(self.l2_mean(mean1))
+#         mean = 1 / nn.Softplus()(self.l3_mean(mean2))  # helps convergence
+#
+#         w_var = w[..., self.param_idxs[1]]
+#         var1 = nn.Tanh()(self.l1_var(w_var))
+#         var2 = nn.Tanh()(self.l2_var(var1))
+#         var = nn.Softplus()(self.l3_var(var2))
+#
+#         return mean, var
+#
+#     def forward(self, w, data, training_mask=None):
+#         mean, var = self.decode(w)
+#         if training_mask is not None:
+#             mean = training_mask * mean + (1 - training_mask) * mean.detach()
+#
+#         rate = mean / var
+#         a = mean**2 / var
+#         losses = -torch.distributions.gamma.Gamma(a, rate).log_prob(data)
+#         avg = torch.mean(losses, dim=-1)
+#         return avg
+#
+#     @staticmethod
+#     def mean(params):
+#         return params[1] / params[0]
+#
+#     @staticmethod
+#     def std(params):
+#         return np.sqrt(params[1] / params[0] ** 2)
 
 
 class PoissonNLL(ModelObject):
