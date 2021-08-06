@@ -27,10 +27,10 @@ periods = [20, 10]  # 20 idxs is a period, 10 idxs is another driving period
 model_obj = model_objs.SkewNLLwithTime(x_dim=x.shape[1], num_freqs=[len(periods),] * 3)
 
 # train the model
-k = koopman_probabilistic.KoopmanProb(model_obj, device='cpu', num_fourier_modes=len(periods))
-k.find_fourier_omegas(x, hard_code=periods)
+k = koopman_probabilistic.KoopmanProb(model_obj, device='cpu')
+k.init_periods(periods)
 k.fit(x, iterations=10, weight_decay=0, verbose=True)
-params = k.predict(T=15000)
+params = k.predict(T=110_000)
 # de-normalize to original scale and loc
 params = model_obj.rescale(loc, scale, params)
 loc_hat, scale_hat, alpha_hat = params
@@ -42,7 +42,7 @@ plt.plot(x_hat, "tab:orange", label="$\hat x$")
 plt.plot(data, "tab:blue", label="$x$")
 plt.plot(x_hat + std_hat, "--k", label="$\hat x \pm \hat \sigma$")
 plt.plot(x_hat - std_hat, "--k")
-plt.xlim([9900, 10100])
+plt.xlim([9_900, 10_100])
 plt.legend()
 plt.show()
 
@@ -50,6 +50,6 @@ plt.plot(mu_t, label="$\mu$")
 plt.plot(x_hat, ":k", label="$\hat \mu$")
 plt.plot(sigma_t, label="$\sigma$")
 plt.plot(std_hat, "--k", label="$\hat \sigma$")
-plt.xlim([99900, 100100])
+plt.xlim([50_900, 51_100])
 plt.legend()
 plt.show()

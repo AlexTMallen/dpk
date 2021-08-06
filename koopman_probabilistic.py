@@ -43,11 +43,6 @@ class KoopmanProb(nn.Module):
 
     seed: The seed to set for pyTorch and numpy--WARNING: does not seem to make results reproducible
 
-    num_fourier_modes: the number of frequencies to set using the argmax values of the fourier transform. these are
-                       shared between all parameters
-                       condition: num_fourier_modes <= min(num_freqs)
-                       default = 0
-
     loss_weights: torch.tensor of shape (xt.shape[0],) that represents how to weight the losses over time.
                   default=None
 
@@ -78,7 +73,6 @@ class KoopmanProb(nn.Module):
         self.multi_gpu = multi_gpu
 
         self.parallel_batch_size = kwargs['parallel_batch_size'] if 'parallel_batch_size' in kwargs else 1000
-        self.num_fourier_modes = kwargs['num_fourier_modes'] if 'num_fourier_modes' in kwargs else 0
         self.batch_size = kwargs['batch_size'] if 'batch_size' in kwargs else 32
         self.loss_weights = kwargs['loss_weights'] if 'loss_weights' in kwargs else None
 
@@ -89,31 +83,32 @@ class KoopmanProb(nn.Module):
         model_obj = model_obj.to(self.device)
         self.model_obj = nn.DataParallel(model_obj, device_ids=kwargs['device']) if multi_gpu else model_obj
         self.sample_num = sample_num
+        self.num_fixed_omegas = 0
 
-    def find_fourier_omegas(self, xt, tt=None, hard_code=None):
+    def find_fourier_omegas(self, xt, num_fourier_modes, tt=None):
         """
-        computes the fft of the data to "hard-code" self.num_fourier_modes values of omega that
-        will remain constant through optimization
+        computes the argmax of the fft of xt to find frequencies the data exhibits. The first
+        num_fourier_modes values of self.omega will be fixed to these values throughout optimization
+        (although they will still be tuned through SGD if lr_omega != 0 when you call fit)
 
         :param xt: the data to initialize fourier modes with. Data samples must be equally spaced
-        :param hard_code: specifically define the periods you wish to preset the model with in a list
-                          pre condition: len(hard_code) < self.num_fourier_modes
+        :param num_fourier_modes: the number of fourier frequencies to find
         :return: omegas found
         """
-        hard_coded_omegas = 2 * np.pi / torch.tensor(hard_code) if hard_code is not None else None
-        assert (tt is None or not (hard_code is not None and len(hard_code) < self.num_fourier_modes)), \
-            "Fourier frequencies of non uniform samples is not yet implemented"
+        if tt is not None:
+            raise ValueError("Fourier frequencies of non uniform samples is not yet implemented")
 
+        self.num_fixed_omegas = max(self.num_fixed_omegas, num_fourier_modes)
         best_omegas = None
-        if self.num_fourier_modes > 0:
+        if num_fourier_modes > 0:
             xt_ft = np.fft.fft(xt, axis=0)
             adj_xt_ft = (abs(xt_ft) + abs(np.flip(xt_ft))).reshape(xt_ft.size)
             freqs = np.tile(np.fft.fftfreq(len(xt_ft)), xt.shape[1])
 
-            best_omegas = np.zeros(self.num_fourier_modes)
+            best_omegas = np.zeros(num_fourier_modes)
             i = 0
             num_found = 0
-            while num_found < self.num_fourier_modes:
+            while num_found < num_fourier_modes:
                 amax = np.argpartition(-adj_xt_ft[:len(xt_ft) // 2], i)[i]  # ith biggest freq
                 if freqs[amax] != 0 and all(abs(1 - best_omegas / freqs[amax]) > 0.1):
                     best_omegas[num_found] = freqs[amax]
@@ -121,17 +116,31 @@ class KoopmanProb(nn.Module):
                 i += 1
 
             best_omegas = 2 * np.pi * torch.tensor(best_omegas)
-            if hard_coded_omegas is not None:
-                # set the last omegas to the hard-coded ones
-                best_omegas[-len(hard_coded_omegas):] = hard_coded_omegas
-            print("fourier periods:", 2 * np.pi / best_omegas)
 
         if best_omegas is not None:
             idx = 0
             for num_freqs in self.num_freqs:
-                self.omegas[idx:idx + self.num_fourier_modes] = best_omegas
+                self.omegas[idx:idx + num_fourier_modes] = best_omegas
                 idx += num_freqs
         return best_omegas
+
+    def init_periods(self, periods):
+        """
+        sets the first len(periods) frequencies for each parameter equal to 2 pi / periods,
+        which will remain constant through optimization (although they will still be tuned through SGD
+        if lr_omega != 0 when you call fit)
+
+        :param periods: the periods you think the data exhibits
+        """
+        if len(periods) > min(self.num_freqs):
+            raise ValueError("Too many periods provided. Must be at most min(self.num_freqs).")
+
+        self.num_fixed_omegas = max(self.num_fixed_omegas, len(periods))  # increase it if necessary
+        hard_coded_omegas = 2 * np.pi / torch.tensor(periods, dtype=float)
+        idx = 0
+        for num_freq in self.num_freqs:
+            self.omegas[idx:idx + len(periods)] = hard_coded_omegas
+            idx += num_freq
 
     def sample_error(self, xt, which, tt=None):
         '''
@@ -349,8 +358,8 @@ class KoopmanProb(nn.Module):
 
         return np.mean(losses)
 
-    def fit(self, xt, tt=None, iterations=20, interval=10, cutoff=0, weight_decay=0, verbose=False, lr_theta=1e-4,
-            lr_omega=0, training_mask=None):
+    def fit(self, xt, tt=None, iterations=20, interval=10, cutoff=50, weight_decay=1e-3, verbose=False, lr_theta=1e-4,
+            lr_omega=1e-5, training_mask=None):
         '''
         Given a dataset, this function alternatingly optimizes omega and
         parameters of f. Specifically, the algorithm performs interval many
@@ -396,9 +405,10 @@ class KoopmanProb(nn.Module):
         for i in range(iterations):
 
             if i % interval == 0 and i < cutoff:
-                param_num = 0  # only update omegas that are note the first self.num_fourier_modes idxs of each param
+                # only update omegas that are note the first self.num_fixed_omegas idxs of each param
+                param_num = 0
                 for num_freqs in self.num_freqs:
-                    for k in range(param_num + self.num_fourier_modes, param_num + num_freqs):
+                    for k in range(param_num + self.num_fixed_omegas, param_num + num_freqs):
                         self.fft(xt, k, tt=tt, verbose=verbose)
                     param_num += num_freqs
 
