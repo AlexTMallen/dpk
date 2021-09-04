@@ -1,4 +1,9 @@
 data/
+*.txt
+*.ipynb
+
+!requirements.txt
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

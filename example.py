@@ -7,8 +7,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-import koopman_probabilistic
-import model_objs
+from dpk import koopman_probabilistic, model_objs
 
 # generate toy data with periodic uncertainty
 t = np.linspace(0, 10_000 * np.pi, 100_000)

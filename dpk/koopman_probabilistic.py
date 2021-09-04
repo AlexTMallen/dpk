@@ -12,11 +12,6 @@ from torch import optim
 
 import numpy as np
 
-from scipy.ndimage import gaussian_filter
-
-import matplotlib.pyplot as plt
-
-
 class KoopmanProb(nn.Module):
     r'''
 
