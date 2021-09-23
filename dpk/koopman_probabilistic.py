@@ -12,35 +12,28 @@ from torch import optim
 
 import numpy as np
 
+
 class KoopmanProb(nn.Module):
     r'''
-
     model_obj: an object that specifies the function f and how to optimize
                it. The object needs to implement numerous function. See
                below for some examples.
-
     sample_num: number of samples from temporally local loss used to
                 reconstruct the global error surface.
-
     batch_size: Number of temporal snapshots processed by SGD at a time
                 default = 32
                 type: int
-
     parallel_batch_size: Number of temporaly local losses sampled in parallel.
                          This number should be as high as possible but low enough
                          to not cause memory issues.
                          default = 1000
                          type: int
-
     device: The device on which the computations are carried out.
             Example: cpu, cuda:0, or list of GPUs for multi-GPU usage, i.e. ['cuda:0', 'cuda:1']
             default = 'cpu'
-
     seed: The seed to set for pyTorch and numpy--WARNING: does not seem to make results reproducible
-
     loss_weights: torch.tensor of shape (xt.shape[0],) that represents how to weight the losses over time.
                   default=None
-
     '''
 
     def __init__(self, model_obj, sample_num=12, seed=None, **kwargs):
@@ -71,7 +64,8 @@ class KoopmanProb(nn.Module):
         self.batch_size = kwargs['batch_size'] if 'batch_size' in kwargs else 32
         self.loss_weights = kwargs['loss_weights'] if 'loss_weights' in kwargs else None
 
-        self.max_t = 1
+        self.covariates_mean = 0
+        self.covariates_std = 1
         # Initial guesses for frequencies
         self.omegas = torch.linspace(0.01, 0.5, self.total_freqs, device=self.device)
 
@@ -85,7 +79,6 @@ class KoopmanProb(nn.Module):
         computes the argmax of the fft of xt to find frequencies the data exhibits. The first
         num_fourier_modes values of self.omega will be fixed to these values throughout optimization
         (although they will still be tuned through SGD if lr_omega != 0 when you call fit)
-
         :param xt: the data to initialize fourier modes with. Data samples must be equally spaced
         :param num_fourier_modes: the number of fourier frequencies to find
         :return: omegas found
@@ -124,7 +117,6 @@ class KoopmanProb(nn.Module):
         sets the first len(periods) frequencies for each parameter equal to 2 pi / periods,
         which will remain constant through optimization (although they will still be tuned through SGD
         if lr_omega != 0 when you call fit)
-
         :param periods: the periods you think the data exhibits
         """
         if len(periods) > min(self.num_freqs):
@@ -139,23 +131,19 @@ class KoopmanProb(nn.Module):
 
     def sample_error(self, xt, which, tt=None):
         '''
-
         sample_error computes all temporally local losses within the first
         period, i.e. between [0,2pi/t]
-
         Parameters
         ----------
         xt : TYPE numpy.array
             Temporal data whose first dimension is time.
         which : TYPE int
             Index of the entry of omega
-
         Returns
         -------
         TYPE numpy.array
             Matrix that contains temporally local losses between [0,2pi/t]
             dimensions: [T, sample_num]
-
         '''
         if type(xt) == np.ndarray:
             xt = torch.tensor(xt, device=self.device)
@@ -177,7 +165,7 @@ class KoopmanProb(nn.Module):
             wt = t_batch * omega[None]
             wt[:, which] = 0
             wt = wt[:, None] + pi_block[None]
-            k = torch.cat([torch.cos(wt), torch.sin(wt)], -1)
+            k = torch.cat([torch.cos(wt), torch.sin(wt)], -1)  # TODOTHIS MIGHT BE WRONG BECAUSE OF INDEXING # [cos_mu_w1, cos_mu_w2, cos_sigma_w1, cos_sigma_w2, cos_alpha_w1, cos_alpha_w2, sin...]
             loss = self.model_obj(k, xt[i * batch:(i + 1) * batch, None], None).cpu().detach().numpy()
             errors.append(loss)
 
@@ -211,7 +199,6 @@ class KoopmanProb(nn.Module):
 
     def fft(self, xt, i, tt=None, verbose=False):
         '''
-
         fft first samples all temporaly local losses within the first period
         and then reconstructs the global error surface w.r.t. omega_i
         Parameters
@@ -230,7 +217,6 @@ class KoopmanProb(nn.Module):
             Global loss surface in time domain.
         E_ft : TYPE
             Global loss surface in frequency domain.
-
         '''
         assert (tt is None), "Not yet implemented for non-uniform samples"  # TODO
 
@@ -273,26 +259,23 @@ class KoopmanProb(nn.Module):
 
         return E, E_ft
 
-    def sgd(self, xt, tt=None, weight_decay=0, verbose=False, lr_theta=1e-5, lr_omega=1e-5, training_mask=None):
+    def sgd(self, xt, tt=None, covariates=None, weight_decay=0, verbose=False, lr_theta=1e-5, lr_omega=1e-5, training_mask=None):
         '''
-
         sgd performs a single epoch of stochastic gradient descent on parameters
         of f (Theta) and frequencies omega
-
         Parameters
         ----------
         xt : TYPE numpy.array
             Temporal data whose first dimension is time.
         tt : TYPE numpy.array
             the times of measurement of xt
+        covariates : np.array of shape (time, n)
         verbose : TYPE boolean, optionally
             The default is False.
-
         Returns
         -------
         TYPE float
             Loss.
-
         '''
 
         batch_size = self.batch_size
@@ -307,6 +290,7 @@ class KoopmanProb(nn.Module):
         opt_omega = optim.SGD([omega], lr=lr_omega / T)
 
         t = torch.arange(T, device=self.device) if tt is None else torch.tensor(tt, device=self.device)
+        covars = torch.zeros((T,0)) if covariates is None else (covariates - self.covariates_mean) / self.covariates_std
 
         losses = []
 
@@ -316,7 +300,6 @@ class KoopmanProb(nn.Module):
         batches = idxs[:T // batch_size * batch_size].reshape((T // batch_size, batch_size))
 
         for i in range(len(batches)):
-
             opt.zero_grad()
             opt_omega.zero_grad()
 
@@ -329,7 +312,7 @@ class KoopmanProb(nn.Module):
 
             wt = ts_ * o
 
-            k = torch.cat([torch.cos(wt), torch.sin(wt), ts_ / self.max_t], -1)
+            k = torch.cat([torch.cos(wt), torch.sin(wt), covars[batches[i], :]], -1)
             batch_mask = training_mask[batches[i]] if training_mask is not None else None
 
             batch_losses = self.model_obj(k, xt_t, batch_mask)
@@ -353,22 +336,25 @@ class KoopmanProb(nn.Module):
 
         return np.mean(losses)
 
-    def fit(self, xt, tt=None, iterations=20, interval=10, cutoff=50, weight_decay=1e-3, verbose=False, lr_theta=1e-4,
-            lr_omega=1e-5, training_mask=None):
+    def fit(self, xt, tt=None, covariates=None, iterations=20, interval=10, cutoff=50, weight_decay=1e-3, verbose=False,
+            lr_theta=1e-4, lr_omega=1e-5, training_mask=None):
         '''
         Given a dataset, this function alternatingly optimizes omega and
         parameters of f. Specifically, the algorithm performs interval many
         epochs, then updates all entries in omega. This process is repeated
         until iterations-many epochs have been performed
-
         Parameters
         ----------
         xt : TYPE 2D numpy.array
             Temporal data whose first dimension is time.
         tt : TYPE 1D numpy.array of shape (xt.shape[0],)
             the times of measurement of xt. Default None, which assumes tt is uniform
+        covariates : TYPE np.array of shape (xt.shape[0], num_covariates)
+            covariates that should be passed into the neural network along with the
+            sines and cosines. Covariates are normalized before passing into NN, and
+            the normalization is remembered for when `predict` is called
         iterations : TYPE int, optional
-            Total number of SGD epochs. The default is 10.
+            Total number of SGD epochs
         interval : TYPE, optional
             The interval at which omegas are updated, i.e. if
             interval is 5, then omegas are updated every 5 epochs. The default is 5.
@@ -383,18 +369,21 @@ class KoopmanProb(nn.Module):
                         shape should match xt. a 1 indicates to train mu on that data,
                         a 0 indicates not to.
                         Default: None (equivalent to torch.ones(xt.shape))
-
         Returns
         -------
         Losses
-
         '''
-
         assert (len(xt.shape) > 1), 'Input data needs to be at least 2D'
         if training_mask is not None:
             training_mask = torch.Tensor(training_mask)
+        if (covariates is None and self.model_obj.num_covariates != 0) or covariates.shape[1] != self.model_obj.num_covariates:
+            raise ValueError(f"model object requires {self.model_obj.num_covariates} covariates but {covariates.shape[1] if covariates is not None else 0} were provided")
+        if self.model_obj.num_covariates != 0:
+            if covariates is not None:
+                covariates = torch.Tensor(covariates)
+                self.covariates_mean = covariates.mean(axis=0)
+                self.covariates_std = covariates.std(axis=0)
 
-        self.max_t = tt.max() if tt is not None else xt.shape[0]
         l = None
         losses = []
         for i in range(iterations):
@@ -411,8 +400,8 @@ class KoopmanProb(nn.Module):
                 print('Iteration ', i)
                 print(2 * np.pi / self.omegas)
 
-            l = self.sgd(xt, tt=tt, weight_decay=weight_decay, verbose=verbose, lr_theta=lr_theta, lr_omega=lr_omega,
-                         training_mask=training_mask)
+            l = self.sgd(xt, tt=tt, covariates=covariates, weight_decay=weight_decay, verbose=verbose,
+                         lr_theta=lr_theta, lr_omega=lr_omega, training_mask=training_mask)
             losses.append(l)
             if verbose:
                 print('Loss: ', l)
@@ -425,29 +414,33 @@ class KoopmanProb(nn.Module):
         print("Final loss:", l)
         return losses
 
-    def predict(self, T):
+    def predict(self, T, covariates=None):
         '''
         Predicts the data from 1 to T.
-
         Parameters
         ----------
         T : TYPE int
             Prediction horizon
             TYPE numpy.ndarray
             Exact times for which to predict, 1D array
-
+        covariates : TYPE np.array of shape (xt.shape[0], num_covariates)
+            covariates that should be passed into the neural network along with the
+            sines and cosines
         Returns
         -------
         TYPE numpy.array
             xhat from 0 to T.
-
         '''
+        if (covariates is None and self.model_obj.num_covariates != 0) or covariates.shape[1] != self.model_obj.num_covariates:
+            raise ValueError(
+                f"model object requires {self.model_obj.num_covariates} covariates but {covariates.shape[1] if covariates is not None else 0} were provided")
 
         t = torch.arange(T, device=self.device) + 1 if isinstance(T, int) else torch.tensor(T, device=self.device)
         ts_ = torch.unsqueeze(t, -1).type(torch.get_default_dtype())
-
+        covars = torch.zeros((T,0)) if covariates is None else (torch.Tensor(covariates) - self.covariates_mean) / self.covariates_std
         o = torch.unsqueeze(self.omegas, 0)
-        k = torch.cat([torch.cos(ts_ * o), torch.sin(ts_ * o), ts_ / self.max_t], -1)
+
+        k = torch.cat([torch.cos(ts_ * o), torch.sin(ts_ * o), covars], -1)
 
         if self.multi_gpu:
             params = self.model_obj.module.decode(k)
