@@ -32,17 +32,15 @@ It has 3 dependencies:
    be found by DPK by solving a global optimization problem or via the
    FFT.
 3. Choose a model object from `model_obs.py` or write your own. We
-   recommend starting out with `SkewNLLwithTime`, which assumes your
-   data is drawn from a time-varying skew-normal distribution at every
-   point in time. "withTime" indicates that this model object allows for
-   non-periodic trends.
+   recommend starting out with `SkewNormalNLL`, which assumes your data
+   is drawn from a time-varying skew-normal distribution at every point
+   in time.
 4. Call fit!
 
 ```
 x = np.sin(np.linspace(0, 1000 * np.pi, 10000)).reshape(-1, 1)  # for example
 periods = [20,]  # 20 idxs is a period
-num_freqs = [len(periods),] * 3  # Skew-normal distrs are parametrized by 3 numbers, all must be forecast
-model_obj = model_objs.SkewNLLwithTime(x_dim=x.shape[1], num_freqs=num_freqs)
+model_obj = model_objs.SkewNormalNLL(x_dim=x.shape[1], num_freqs=len(periods))
 
 k = koopman_probabilistic.KoopmanProb(model_obj, device='cpu')
 k.init_periods(periods)
@@ -73,3 +71,8 @@ additional `tt` parameter that indicates the time of each observation.
 `k.predict` can also be called with an array of time values, rather than
 forecasting for each integer from 0 to `T`.
 
+### Covariates
+Covariates (most commonly, time) can be passed into the neural network
+along with the usual vector of sines and cosines by specifying
+`num_covariates` in the `model_obj` constuctor and providing the
+covariates when calling `k.fit` and `k.predict`.

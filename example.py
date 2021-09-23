@@ -23,7 +23,7 @@ x = x.reshape(-1, 1)
 
 # define a model
 periods = [20, 10]  # 20 idxs is a period, 10 idxs is another driving period
-model_obj = model_objs.SkewNLLwithTime(x_dim=x.shape[1], num_freqs=[len(periods),] * 3)
+model_obj = model_objs.SkewNormalNLL(x_dim=x.shape[1], num_freqs=len(periods))
 
 # train the model
 k = koopman_probabilistic.KoopmanProb(model_obj, device='cpu')

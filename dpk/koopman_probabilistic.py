@@ -376,7 +376,7 @@ class KoopmanProb(nn.Module):
         assert (len(xt.shape) > 1), 'Input data needs to be at least 2D'
         if training_mask is not None:
             training_mask = torch.Tensor(training_mask)
-        if (covariates is None and self.model_obj.num_covariates != 0) or covariates.shape[1] != self.model_obj.num_covariates:
+        if (covariates.shape[1] if covariates is not None else 0) != self.model_obj.num_covariates:
             raise ValueError(f"model object requires {self.model_obj.num_covariates} covariates but {covariates.shape[1] if covariates is not None else 0} were provided")
         if self.model_obj.num_covariates != 0:
             if covariates is not None:
@@ -431,7 +431,7 @@ class KoopmanProb(nn.Module):
         TYPE numpy.array
             xhat from 0 to T.
         '''
-        if (covariates is None and self.model_obj.num_covariates != 0) or covariates.shape[1] != self.model_obj.num_covariates:
+        if (covariates.shape[1] if covariates is not None else 0) != self.model_obj.num_covariates:
             raise ValueError(
                 f"model object requires {self.model_obj.num_covariates} covariates but {covariates.shape[1] if covariates is not None else 0} were provided")
 

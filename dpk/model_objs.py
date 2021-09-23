@@ -165,22 +165,6 @@ class SkewNormalNLL(ModelObject):
         return muh, sigh, ah
 
 
-class SkewNLLwithTime(SkewNormalNLL):
-    # todo remove this and just let people put whatever covariates they like into the NN
-    def __init__(self, x_dim, num_freqs, n=256, n2=64, num_covariates=0):
-        """
-        neural network that takes a vector of sines and cosines and produces a skew-normal distribution with parameters
-        mu, sigma, and alpha (the outputs of the NN). trains using NLL. Takes time as an input along with the vector of
-        sines and cosines
-        :param x_dim: number of dimensions spanned by the probability distr
-        :param num_freqs: int or list. number of frequencies used for each of the 3 parameters: [num_mu, num_sig, num_alpha]
-        :param n: size of 1st hidden layer of NN
-        :param n2: size of 2nd hidden layer of NN
-        :param num_covariates: number of covariates (other than time) that will be given as inputs to the NN
-        """
-        super(SkewNLLwithTime, self).__init__(x_dim, num_freqs, n, n2, num_covariates + 1)  # time is just a covariate
-
-
 class NormalNLL(ModelObject):
 
     def __init__(self, x_dim, num_freqs, n=128, n2=64, num_covariates=0):
