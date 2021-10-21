@@ -110,6 +110,7 @@ class SkewNormalNLL(ModelObject):
         return y, z, a
 
     def forward(self, w, data, training_mask=None):
+        data = data.type(w.type())
         mu, sig, alpha = self.decode(w)
         if training_mask is None:
             y = mu
@@ -213,7 +214,7 @@ class NormalNLL(ModelObject):
             # z = (1 - training_mask) * sig + training_mask * sig.detach()
             z = sig
 
-        losses = (data - y) ** 2 / (2 * z ** 2) + torch.log(z)
+        losses = (data.type(w.type()) - y) ** 2 / (2 * z ** 2) + torch.log(z)
         avg = torch.mean(losses, dim=-1)
         return avg
 
@@ -279,7 +280,7 @@ class GammaNLL(ModelObject):
             rate = mean / var
             a = mean / var ** 2
 
-        losses = -torch.distributions.gamma.Gamma(a, rate).log_prob(data)
+        losses = -torch.distributions.gamma.Gamma(a, rate).log_prob(data.type(w.type()))
         avg = torch.mean(losses, dim=-1)
         return avg
 
@@ -328,7 +329,7 @@ class PoissonNLL(ModelObject):
         assert (training_mask is None), "Poisson distributions don't support training masks"
         rate, = self.decode(w)
 
-        losses = -torch.distributions.poisson.Poisson(rate).log_prob(data)
+        losses = -torch.distributions.poisson.Poisson(rate).log_prob(data.type(w.type()))
         avg = torch.mean(losses, dim=-1)
         return avg
 
@@ -339,3 +340,54 @@ class PoissonNLL(ModelObject):
     @staticmethod
     def std(params):
         return np.sqrt(params[0])
+
+
+class DeterministicMSE(ModelObject):
+
+    def __init__(self, x_dim, num_freqs, n=128, n2=64, num_covariates=0):
+        """
+        Negative Log Likelihood neural network assuming Poisson distribution of x at every point in time.
+        Trains using NLL
+        :param x_dim: dimension of what will be modeled
+        :param num_freqs: int or list. list of the number of frequencies used to model each parameter: [num_rate,]
+        :param n: size of 1st hidden layer of NN
+        :param n2: size of 2nd hidden layer of NN
+        :param num_covariates: number of covariates that will be given as inputs to the NN
+        """
+        if type(num_freqs) is int:
+            num_freqs = [num_freqs] * 1
+        super(DeterministicMSE, self).__init__(num_freqs, num_covariates)
+
+        self.l1 = nn.Linear(2 * self.num_freqs[0] + num_covariates, n)
+        self.l2 = nn.Linear(n, n2)
+        self.l3 = nn.Linear(n2, x_dim)
+
+    def decode(self, w):
+        w = w[..., (*self.param_idxs[0], *np.arange(-self.num_covariates, 0))]
+        w1 = nn.Tanh()(self.l1(w))
+        w2 = nn.Tanh()(self.l2(w1))
+        xhat = self.l3(w2)
+
+        return xhat,
+
+    def forward(self, w, data, training_mask=None):
+        assert (training_mask is None), "Deterministic forecasts don't support training masks"
+        xhat, = self.decode(w)
+
+        losses = torch.nn.MSELoss()(xhat, data.type(w.type()))
+        avg = torch.mean(losses, dim=-1)
+        return avg
+
+    @staticmethod
+    def mean(params):
+        return params[0]
+
+    @staticmethod
+    def std(params):
+        return np.zeros(params[0].shape)
+
+    @staticmethod
+    def rescale(loc, scale, params):
+        """rescales a point forecast distribution with the given parameters so that its scale is
+                multiplied by scale and its center is shifted by loc"""
+        return params[0] * scale + loc,
