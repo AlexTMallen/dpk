@@ -42,13 +42,25 @@ class ModelObject(nn.Module):
 
     def decode(self, w):
         """
-        Evaluates f at temporal snapshots y
+        Evaluates f at temporal snapshots w
         Input:
             w: temporal snapshots of the linear system
                 type: torch.tensor
                 dimensions: [T, (batch,) num_frequencies ]
+        Return torch tensor of predictions
         """
         raise NotImplementedError()
+
+    def output(self, w):
+        """
+        Evaluates f at temporal snapshots w
+        :param w:
+        temporal snapshots of the linear system
+                type: torch.tensor
+                dimensions: [T, (batch,) num_frequencies ]
+        :return: numpy array of predictions
+        """
+        return tuple(param.cpu().detach().numpy() for param in self.decode(w))
 
     @staticmethod
     def mean(params):
@@ -374,7 +386,7 @@ class DeterministicMSE(ModelObject):
         assert (training_mask is None), "Deterministic forecasts don't support training masks"
         xhat, = self.decode(w)
 
-        losses = torch.nn.MSELoss()(xhat, data.type(w.type()))
+        losses = (xhat - data.type(w.type())) ** 2
         avg = torch.mean(losses, dim=-1)
         return avg
 
@@ -384,7 +396,9 @@ class DeterministicMSE(ModelObject):
 
     @staticmethod
     def std(params):
-        return torch.zeros(params[0].shape)
+        if isinstance(params[0], torch.Tensor):
+            return torch.zeros(params[0].shape)
+        return np.zeros(params[0].shape)
 
     @staticmethod
     def rescale(loc, scale, params):
