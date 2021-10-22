@@ -384,7 +384,7 @@ class DeterministicMSE(ModelObject):
 
     @staticmethod
     def std(params):
-        return np.zeros(params[0].shape)
+        return torch.zeros(params[0].shape)
 
     @staticmethod
     def rescale(loc, scale, params):
