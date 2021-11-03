@@ -437,7 +437,7 @@ class KoopmanProb(nn.Module):
 
         t = torch.arange(T, device=self.device) + 1 if isinstance(T, int) else torch.tensor(T, device=self.device)
         ts_ = torch.unsqueeze(t, -1).type(torch.get_default_dtype())
-        covars = torch.zeros((T,0)) if covariates is None else (torch.Tensor(covariates) - self.covariates_mean) / self.covariates_std
+        covars = torch.zeros((len(t),0)) if covariates is None else (torch.Tensor(covariates) - self.covariates_mean) / self.covariates_std
         o = torch.unsqueeze(self.omegas, 0)
 
         k = torch.cat([torch.cos(ts_ * o), torch.sin(ts_ * o), covars], -1)
